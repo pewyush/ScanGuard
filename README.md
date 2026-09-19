@@ -89,3 +89,9 @@ This dataset was chosen specifically because it's harder than the original MVTec
 - Production-grade explainability dashboards
 
 These may be natural extensions in a follow-up project, but are not part of this project's evaluation criteria.
+
+---
+
+## System Requirements
+
+Python 3.12.10
