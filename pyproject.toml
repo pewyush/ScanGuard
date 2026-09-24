@@ -1,7 +1,7 @@
 [project]
 name = "scanguard"
 version = "0.1.0"
-description = "Add your description here"
+description = "ScanGuard"
 readme = "README.md"
 authors = [
     { name = "Peeyush ", email= ""},
