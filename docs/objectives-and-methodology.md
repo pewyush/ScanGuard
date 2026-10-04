@@ -80,7 +80,7 @@ Family thesis: teach a compact *student* to imitate a frozen pretrained *teacher
 - **Methodology:** freeze a pretrained teacher CNN; train students (one per teacher layer with different receptive fields) to regress the teacher's feature maps and its "pointwise descriptors" on normal images; at test time, high student–teacher residual ⇒ anomaly.
 - **Core assumption:** the student (trained on normals only) cannot generalize its imitation to out-of-distribution content.
 
-### Reverse Distillation (Deng & Li, ECCV 2022) / AST
+### Reverse Distillation (Deng & Li, CVPR 2022) / AST (RD++, Tien et al., CVPR 2023)
 - **Objective:** avoid teacher collapse and improve separation by inverting the flow — teach a student the *teacher's* features one-way.
 - **Methodology:** a one-class bottleneck between teacher and student lets normal features pass through while anomalies break the reconstruction, typically combined with asymmetric/compact student architectures.
 - **Core assumption:** an invertible/asymmetric bottleneck is a stricter filter for normality than naive forward imitation.
@@ -95,10 +95,11 @@ Family thesis: teach a compact *student* to imitate a frozen pretrained *teacher
 - **Core assumption:** a locally-scoped, distilled student can mirror the normal distribution cheaply but is *deliberately* kept unable to mimic anomalies.
 - **Relevance:** demonstrates the engineering axis (fast + accurate) that pure embedding methods trade off; its design choices (PDN distillation, anti-mimicry loss, logical-anomaly AE) each map to a specific documented failure mode of the other two families.
 
-### Normalizing-flow density (FastFlow, CFLOW)
+### Normalizing-flow density (FastFlow, CFLOW, MSFlow)
 - **Objective:** replace distance-to-distribution with an explicit *density* of normal features.
 - **Methodology:** a normalizing-flow model maps normal patch/feature vectors to a simple base distribution; test-time log-likelihood (i.e. negative density) is the anomaly score.
 - **Core assumption:** density estimation captures normality sharper than distance metrics; caveat — under high normal variability (MVTec AD 2's high-variance scenarios) density models can overestimate anomality on legitimately diverse normals.
+- **Benchmark note:** the flow-based method actually evaluated on MVTec AD 2 is **MSFlow** (Zhou et al., TNNLS 2024), scoring 52.7% AU-PRO(0.30) — not FastFlow or CFLOW-AD.
 
 ---
 
@@ -109,7 +110,7 @@ Family thesis: teach a compact *student* to imitate a frozen pretrained *teacher
   1. **Eight scenarios** (8,004 high-res, 2.6–5 MP images) chosen to stress the known failure modes: transparent and reflective surfaces, dark-field/back-light illumination, overlapped/bulk objects, **high variance in normal data**, extremely small defects, and lighting-condition shifts between splits.
   2. **Unsupervised split structure:** train + validation contain *only* non-anomalous images; two test splits (public with pixel-precise ground truth; private evaluable only through MVTec's server) — preserving the setting where defect types are unknown until deployment.
   3. **Stricter metric:** in addition to AU-PRO(0.30), the paper reports AU-PRO(0.05) — restricting the PRO curve's false-positive-rate range to 0.05<sup>†</sup> to harshly penalize noisy localization.
-  4. Published results used as context: EfficientAD ~58.7% AU-PRO(0.30); PatchCore ~53.8%; the seven/eight SOTA methods average **below 60% at AU-PRO(0.30)** and **below ~30% at AU-PRO(0.05)**; PatchCore-class methods fall below 30% on hard categories (e.g. Can, Rice).
+  4. Published results used as context (all at 256x256, TEST priv): EfficientAD ~58.7% AU-PRO(0.30); PatchCore ~53.8%; RD++ ~54.3%; RD ~53.0%; MSFlow ~52.7%; SimpleNet ~46.4%; DSR ~49.0% — a seven-method mean of **~52.6% AU-PRO(0.30)**, with **every** method **below 31% at AU-PRO(0.05)** (EfficientAD best at 30.8%). PatchCore falls to 4.7% (Can) and 25.6% (Rice) at AU-PRO(0.05).
 - **Why localization metrics matter:** per-pixel AUROC is inflated by extreme class imbalance (anomalies are tiny); the **Per-Region Overlap (PRO)** metric (Bergmann et al.) computes region-scoped recall per connected ground-truth region, averaged across regions, and integrates only over FPR ≤ threshold — so every defect counts equally regardless of size, which a plain pixel AUROC hides.
 
 <sup>†</sup> *AU-PRO(0.05) integrates the PRO curve over the FPR range [0, 0.05] instead of [0, 0.30], i.e. only very precise anomaly maps score well.*
