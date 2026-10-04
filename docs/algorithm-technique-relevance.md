@@ -30,7 +30,7 @@ This is exactly the **cold-start problem** that every reviewed family solves. Th
 
 1. **No per-dataset training** — PaDiM is purely statistical (Gaussian fitting, no backprop); PatchCore is feature extraction + coreset. This keeps the iterated experiment on budget and directly contrasts with the AE's full training loop — the compute comparison is itself a finding.
 2. **Localization without extra machinery** — a Mahalanobis/kNN anomaly map is inherent; the write-up can compare localization *at the same cost* as image-level detection.
-3. **The benchmark numbers are unresolved** — on MVTec AD 2, even PatchCore (~53.8% AU-PRO) leaves room; this means the comparison can discuss *where* embedding methods break (hard categories below ~30%), rather than merely reproducing a saturated SOTA. That is the project's stated rationale for picking MVTec AD 2.
+3. **The benchmark numbers are unresolved** — on MVTec AD 2, even PatchCore reaches only ~53.8% AU-PRO(0.30) (and 4.7% on *Can* at AU-PRO(0.05)); this means the comparison can discuss *where* embedding methods break (hard categories), rather than merely reproducing a saturated SOTA. That is the project's stated rationale for picking MVTec AD 2.
 
 **Caveat to plan for in the write-up (known domain mismatch):** ImageNet-pretrained backbones are biased toward natural images; on transparent/reflective industrial objects this causes false detections. This is a *relevant limitation* section, not a blocker.
 

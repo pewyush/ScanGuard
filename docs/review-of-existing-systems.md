@@ -42,13 +42,14 @@ Train a *student* to mimic a frozen pretrained *teacher* on normal images; anoma
 
 ### Published numbers on MVTec AD 2 (context for the write-up)
 
-| Method | Avg AU-PRO(0.05) |
+| Method | Avg AU-PRO(0.30) |
 |---|---|
 | EfficientAD | ~58.7% |
 | PatchCore | ~53.8% |
 
-- Average AU-PRO(0.30) of the seven/eight benchmarked SOTA methods remains **below 60%**; with the stricter AU-PRO(0.05) it drops **below ~30%** on average.
-- On hard categories (e.g. Can, Rice), PatchCore-class methods fall **below 30%**.
+- The paper benchmarks **seven** methods: EfficientAD, RD, RD++, PatchCore, MSFlow, SimpleNet, DSR. Average AU-PRO(0.30) remains **below 60%**; with the stricter AU-PRO(0.05) **every** method drops **below 31%** (EfficientAD best at 30.8%).
+- On hard categories, performance collapses: at AU-PRO(0.05) on TEST priv, PatchCore scores **4.7% on Can** and **25.6% on Rice**. Can is the hardest scenario for every investigated method, not just memory-bank ones.
+- Input resolution dominates these numbers: PatchCore on Rice rises from 28.8% to 62.3% AU-PRO(0.05) at higher resolution, at ~an order of magnitude more runtime/memory. Any comparison must state its input resolution.
 - A training-free DINOv2-based method (**SuperAD**) won the CVPR 2025 VAND 3.0 challenge on the public splits.
 
 The README's claim that SOTA tops out under ~60% average AU-PRO is accurate, and the dataset genuinely leaves room to demonstrate model-design decisions rather than merely re-benchmarking a saturated dataset.
