@@ -30,6 +30,9 @@ class ConvAutoencoder(nn.Module):
     ) -> None:
         super().__init__()
 
+        if img_size % 16 != 0:
+            raise ValueError(f"img_size must be divisible by 16, got {img_size}")
+
         self.latent_dim = latent_dim
         self.base_channels = base_channels
         self.in_channels = in_channels
@@ -69,9 +72,7 @@ class ConvAutoencoder(nn.Module):
         self.decoder_in_proj = nn.Linear(latent_dim, self.encoder_out_channels * final_h * final_h)
 
         self.decoder = nn.Sequential(
-            # Start from projected latent vector, reshape to feature map
-            nn.Unflatten(dim=1, unshape=(self.encoder_out_channels, final_h, final_h)),
-            # Upsample back to img_size
+            # Input is already reshaped to (B, base_channels*8, final_h, final_h)
             nn.ConvTranspose2d(
                 self.encoder_out_channels, base_channels * 4,
                 kernel_size=4, stride=2, padding=1,
@@ -90,9 +91,11 @@ class ConvAutoencoder(nn.Module):
             ),
             nn.BatchNorm2d(base_channels),
             nn.LeakyReLU(0.2, inplace=True),
-            # Final conv to output channels (no stride, preserve img_size)
-            nn.Conv2d(base_channels, in_channels, kernel_size=3, padding=1),
-            nn.Sigmoid(),  # output in [0,1] assuming normalized input
+            # Fourth upsample restores the input resolution and channels.
+            nn.ConvTranspose2d(
+                base_channels, in_channels,
+                kernel_size=4, stride=2, padding=1,
+            ),
         )
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
