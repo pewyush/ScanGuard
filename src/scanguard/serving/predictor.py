@@ -1,4 +1,4 @@
-"""Checkpoint-backed inference for the reconstruction autoencoder."""
+"""Checkpoint-backed inference for the autoencoder and PaDiM models."""
 
 import base64
 import io
@@ -11,7 +11,7 @@ import torch
 from PIL import Image
 
 from scanguard.data.transforms import build_test_transform
-from scanguard.models import ConvAutoencoder, build_autoencoder
+from scanguard.models import ConvAutoencoder, PaDiM, build_autoencoder
 
 DEFAULT_MODEL_CONFIG: Dict[str, Any] = {
     "latent_dim": 128,
@@ -23,7 +23,7 @@ DEFAULT_MODEL_CONFIG: Dict[str, Any] = {
 
 @dataclass
 class Prediction:
-    """Anomaly score and a base64 PNG overlay of the reconstruction error."""
+    """Anomaly score and a base64 PNG overlay of the anomaly map."""
 
     score: float
     heatmap_data_uri: str
@@ -36,17 +36,17 @@ def _resolve_device(device: Optional[Union[str, torch.device]]) -> torch.device:
 
 
 def _overlay_heatmap(image: Image.Image, errors: np.ndarray) -> str:
-    """Blend a red error heatmap onto the input and return a PNG data URI."""
+    """Blend a red anomaly heatmap onto the input and return a PNG data URI."""
     height, width = errors.shape
     base = np.asarray(image.convert("RGB").resize((width, height)), dtype=np.float32)
 
-    spread = float(errors.max() - errors.min())
-    normalized = (errors - errors.min()) / (spread + 1e-8)
+    low, high = np.percentile(errors, (1.0, 99.0))
+    normalized = np.clip((errors - low) / (high - low + 1e-8), 0.0, 1.0)
 
     heatmap = np.zeros_like(base)
     heatmap[..., 0] = 255.0
     heatmap[..., 1] = 255.0 * (1.0 - normalized)
-    alpha = (0.30 + 0.55 * normalized)[..., None]
+    alpha = (0.20 + 0.60 * normalized)[..., None]
     blended = base * (1.0 - alpha) + heatmap * alpha
 
     buffer = io.BytesIO()
@@ -100,4 +100,39 @@ class AnomalyPredictor:
         return Prediction(
             score=float(error_map.max()),
             heatmap_data_uri=_overlay_heatmap(image, error_map),
+        )
+
+
+class PaDiMAnomalyPredictor:
+    """Load fitted PaDiM statistics and score single images."""
+
+    def __init__(
+        self,
+        model: PaDiM,
+        *,
+        device: Optional[Union[str, torch.device]] = None,
+    ) -> None:
+        self.device = _resolve_device(device)
+        self.model = model
+        self.model.backbone.to(self.device).eval()
+        self.transform = build_test_transform(model.img_size)
+
+    @classmethod
+    def from_file(
+        cls,
+        path: Union[str, Path],
+        *,
+        device: Optional[Union[str, torch.device]] = None,
+    ) -> "PaDiMAnomalyPredictor":
+        return cls(PaDiM.load(path, device="cpu"), device=device)
+
+    @torch.no_grad()
+    def predict(self, image: Image.Image) -> Prediction:
+        """Return the max Mahalanobis distance and an anomaly-map overlay."""
+        tensor = self.transform(image.convert("RGB")).unsqueeze(0)
+        scores, maps = self.model.score_with_maps(tensor, self.device)
+
+        return Prediction(
+            score=float(scores[0]),
+            heatmap_data_uri=_overlay_heatmap(image, maps[0]),
         )

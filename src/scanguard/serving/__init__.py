@@ -1,5 +1,9 @@
-"""Minimal serving layer for the trained anomaly detector."""
+"""Serving layer for the trained anomaly detectors."""
 
-from scanguard.serving.predictor import AnomalyPredictor, Prediction
+from scanguard.serving.predictor import (
+    AnomalyPredictor,
+    PaDiMAnomalyPredictor,
+    Prediction,
+)
 
-__all__ = ["AnomalyPredictor", "Prediction"]
+__all__ = ["AnomalyPredictor", "PaDiMAnomalyPredictor", "Prediction"]

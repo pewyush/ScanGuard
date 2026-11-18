@@ -1,7 +1,14 @@
 jupyter==1.1.1
+# CPU-only: pip install torch==2.15.0 torchvision==0.29.2 --index-url https://download.pytorch.org/whl/cpu
 matplotlib==3.11.2
 notebook==7.6.2
 numpy==2.5.3
 pandas==3.0.6
 scikit-learn==1.9.1
 seaborn==0.13.2
+torch==2.15.0
+torchvision==0.29.2
+pillow==12.3.0
+fastapi==0.162.0
+uvicorn==0.54.0
+pydantic==2.14.2

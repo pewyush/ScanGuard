@@ -1,10 +1,11 @@
 """Evaluation metrics for unsupervised visual anomaly detection.
 
-All metrics share one ranking-based ROC/PR implementation so image-level and
-pixel-level scores are computed consistently.
+Image-level detection uses AUROC / AUPR / thresholded F1. Pixel-level
+localization uses pixel-AUROC and AU-PRO (per-region overlap), the metric
+reported by the MVTec AD 2 benchmark.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
@@ -41,16 +42,8 @@ def _trapezoid_auc(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.sum(np.diff(x) * (y[1:] + y[:-1]) / 2.0))
 
 
-def compute_image_auroc(scores: np.ndarray, labels: np.ndarray) -> float:
-    """Image-level Area Under the ROC Curve.
-
-    Args:
-        scores: anomaly scores per image (higher = more anomalous)
-        labels: binary labels (1 = anomaly, 0 = normal)
-
-    Returns:
-        AUROC in [0, 1], or 0.5 when only one class is present.
-    """
+def compute_image_auroc(scores, labels) -> float:
+    """Image-level Area Under the ROC Curve (higher = more anomalous)."""
     scores, labels = _as_arrays(scores, labels)
     if labels.sum() == 0 or labels.sum() == len(labels):
         return 0.5
@@ -58,22 +51,11 @@ def compute_image_auroc(scores: np.ndarray, labels: np.ndarray) -> float:
     return _trapezoid_auc(fpr, tpr)
 
 
-def compute_image_aupr(
-    scores: np.ndarray, labels: np.ndarray, pos_label: int = 1
-) -> float:
-    """Image-level Area Under the Precision-Recall Curve.
-
-    Args:
-        scores: anomaly scores per image
-        labels: binary labels
-        pos_label: label treated as the positive (anomaly) class
-
-    Returns:
-        AUPR in [0, 1], or 0.0 when there are no positive samples.
-    """
+def compute_image_aupr(scores, labels) -> float:
+    """Image-level average precision (area under the PR curve)."""
     scores, labels = _as_arrays(scores, labels)
     order = np.argsort(scores, kind="mergesort")[::-1]
-    ranked = labels[order] == pos_label
+    ranked = labels[order] == 1
 
     positives = int(ranked.sum())
     if positives == 0:
@@ -83,79 +65,115 @@ def compute_image_aupr(
     precision = true_positive / np.arange(1, len(ranked) + 1)
     recall = true_positive / positives
 
-    precision = np.concatenate(([1.0], precision))
     recall = np.concatenate(([0.0], recall))
-    return _trapezoid_auc(recall, precision)
+    precision = np.concatenate(([1.0], precision))
+    return float(np.sum(np.diff(recall) * precision[1:]))
 
 
-def compute_pixel_auroc(anomaly_maps: np.ndarray, gt_masks: np.ndarray) -> float:
-    """Pixel-level AUROC pooled over every pixel in every map.
-
-    Args:
-        anomaly_maps: anomaly score maps, any shape
-        gt_masks: binary ground-truth masks with the same shape
-    """
-    scores, labels = _as_arrays(anomaly_maps, gt_masks)
+def compute_pixel_auroc(anomaly_maps, gt_masks) -> float:
+    """Pixel-level AUROC pooled over every pixel in every map."""
+    maps = [np.asarray(m, dtype=float) for m in anomaly_maps]
+    masks = [np.asarray(g, dtype=float) for g in gt_masks]
+    scores = np.concatenate([m.ravel() for m in maps])
+    labels = np.concatenate([(g.ravel() > 0.5).astype(float) for g in masks])
     return compute_image_auroc(scores, labels)
 
 
+def _label_regions(mask: np.ndarray) -> List[np.ndarray]:
+    """Return the pixel coordinates of each 8-connected region in ``mask``."""
+    coords = {tuple(c) for c in np.argwhere(mask > 0.5)}
+    regions: List[np.ndarray] = []
+    while coords:
+        seed = coords.pop()
+        stack = [seed]
+        region = [seed]
+        while stack:
+            y, x = stack.pop()
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    neighbour = (y + dy, x + dx)
+                    if neighbour in coords:
+                        coords.remove(neighbour)
+                        stack.append(neighbour)
+                        region.append(neighbour)
+        regions.append(np.asarray(region))
+    return regions
+
+
 def compute_au_pro(
-    anomaly_maps: List[np.ndarray],
-    gt_masks: List[np.ndarray],
+    anomaly_maps: Sequence[np.ndarray],
+    gt_masks: Sequence[np.ndarray],
     fpr_max: float = 0.30,
-    num_fpr_points: int = 200,
+    num_thresholds: int = 200,
 ) -> float:
-    """Compute AU-PRO (Per-Region Overlap) localized over FPR in [0, fpr_max].
+    """Area under the Per-Region Overlap (PRO) curve over FPR in [0, fpr_max].
 
-    This is the simplified pixel-level variant used for local evaluation:
-    recall is measured across all anomalous pixels rather than per connected
-    component, then integrated over the requested FPR range.
+    For every connected ground-truth region, the overlap is the fraction of
+    its pixels whose anomaly score reaches the threshold. Overlaps are
+    averaged across regions and images, then integrated against the global
+    false-positive rate. This follows the AU-PRO definition used by the
+    MVTec benchmarks rather than plain pixel recall.
     """
-    scores = np.concatenate([np.ravel(m) for m in anomaly_maps])
-    labels = np.concatenate([np.ravel(m) for m in gt_masks])
-
-    positives = int((labels == 1).sum())
-    negatives = int((labels == 0).sum())
-    if positives == 0 or negatives == 0:
+    maps = [np.asarray(m, dtype=float) for m in anomaly_maps]
+    masks = [np.asarray(g) > 0.5 for g in gt_masks]
+    if not maps:
         return 0.0
 
-    # Rank once; every FPR threshold reuses the same cumulative TP counts.
-    order = np.argsort(scores, kind="mergesort")[::-1]
-    cumulative_tp = np.cumsum(labels[order] == 1)
+    normal_scores = np.concatenate([m[~g].ravel() for m, g in zip(maps, masks)])
+    if normal_scores.size == 0:
+        return 0.0
 
-    fpr_thresholds = np.linspace(0.0, fpr_max, num_fpr_points)
-    pro_scores = []
-    for fpr_target in fpr_thresholds:
-        n_false_positives = int(fpr_target * negatives)
-        n_selected = min(n_false_positives + positives, len(order))
-        tp = cumulative_tp[n_selected - 1] if n_selected > 0 else 0
-        pro_scores.append(tp / positives)
+    fprs = np.linspace(0.0, fpr_max, num_thresholds)
+    # Score threshold that yields the requested false-positive rate.
+    thresholds = np.quantile(normal_scores, 1.0 - fprs)
 
-    return _trapezoid_auc(fpr_thresholds, np.asarray(pro_scores)) / fpr_max
+    overlaps: List[np.ndarray] = []
+    for anomaly_map, mask in zip(maps, masks):
+        regions = _label_regions(mask)
+        if not regions:
+            continue
+        per_region = []
+        for region in regions:
+            scores = np.sort(anomaly_map[region[:, 0], region[:, 1]])
+            above = 1.0 - np.searchsorted(scores, thresholds, side="left") / len(scores)
+            per_region.append(above)
+        overlaps.append(np.mean(per_region, axis=0))
+
+    if not overlaps:
+        return 0.0
+
+    curve = np.mean(overlaps, axis=0)
+    return float(_trapezoid_auc(fprs, curve) / fpr_max)
+
+
+def compute_image_prf(scores, labels, threshold: float) -> Dict[str, float]:
+    """Precision, recall and F1 at a fixed operated threshold."""
+    scores, labels = _as_arrays(scores, labels)
+    predicted = scores >= threshold
+    positive = labels == 1
+
+    true_positive = int(np.sum(predicted & positive))
+    false_positive = int(np.sum(predicted & ~positive))
+    false_negative = int(np.sum(~predicted & positive))
+
+    precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
+    recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "threshold": float(threshold),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+    }
 
 
 def compute_localization_metrics(
     anomaly_maps: Dict[str, np.ndarray],
     gt_masks: Dict[str, np.ndarray],
 ) -> Dict[str, float]:
-    """Compute pixel-level metrics for maps, or per-category image-level AUROC.
-
-    ``anomaly_maps`` may either map image name -> (H, W) anomaly map (with
-    ``gt_masks`` mapping image name -> (H, W) mask), or map category -> array of
-    image scores (with ``gt_masks`` mapping category -> labels).
-    """
+    """Compute pooled pixel-AUROC for name -> anomaly map / ground-truth mask."""
     if not anomaly_maps:
         return {}
-
-    first = next(iter(anomaly_maps.values()))
-    if isinstance(first, np.ndarray) and first.ndim == 2:
-        scores = [m.ravel() for m in anomaly_maps.values()]
-        labels = [gt_masks[name].ravel() for name in anomaly_maps]
-        return {"pixel_auroc": compute_pixel_auroc(np.concatenate(scores), np.concatenate(labels))}
-
-    return {
-        f"{category}_auroc": compute_image_auroc(
-            scores, gt_masks.get(category, np.zeros_like(scores))
-        )
-        for category, scores in anomaly_maps.items()
-    }
+    scores = [anomaly_maps[name].ravel() for name in anomaly_maps]
+    labels = [gt_masks[name].ravel() for name in anomaly_maps]
+    return {"pixel_auroc": compute_pixel_auroc(np.concatenate(scores), np.concatenate(labels))}

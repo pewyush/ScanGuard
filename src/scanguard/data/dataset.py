@@ -39,9 +39,9 @@ class Sample:
 class MVTecADDataset(Dataset):
     """Dataset over a single MVTec AD 2 category.
 
-    ``phase="train"`` exposes normal training images only and returns
-    ``(image, 0)``. ``phase="test"`` exposes normal and anomalous images and
-    returns ``(image, mask_or_none, label)``.
+    ``phase="train"`` and ``phase="val"`` expose defect-free images only and
+    return ``(image, 0)``. ``phase="test"`` exposes normal and anomalous
+    images and returns ``(image, mask_or_none, label)``.
     """
 
     def __init__(
@@ -52,39 +52,91 @@ class MVTecADDataset(Dataset):
         phase: str = "train",
         transform: Transform = None,
         mask_transform: Transform = None,
+        max_samples: Optional[int] = None,
     ) -> None:
-        if phase not in {"train", "test"}:
-            raise ValueError(f"phase must be 'train' or 'test', got {phase!r}")
+        if phase not in {"train", "val", "test"}:
+            raise ValueError(
+                f"phase must be 'train', 'val' or 'test', got {phase!r}"
+            )
 
         self.category = category
         self.phase = phase
         self.transform = transform
         self.mask_transform = mask_transform
-        self.data_dir = Path(root) / category if category else Path(root)
-        self.samples = self._build_samples()
+        self.data_dir = self._resolve_data_dir(Path(root), category)
+        self.samples = self._build_samples(max_samples)
+
+    @staticmethod
+    def _resolve_data_dir(root: Path, category: Optional[str]) -> Path:
+        """Accept both ``<root>/<category>`` and ``<root>/<category>/<category>``."""
+        if not category:
+            return root
+        direct = root / category
+        nested = direct / category
+        markers = ("train", "training", "validation", "test_public", "test")
+        direct_ready = any((direct / marker).exists() for marker in markers)
+        nested_ready = any((nested / marker).exists() for marker in markers)
+        if nested_ready and not direct_ready:
+            return nested
+        return direct
 
     # ------------------------------------------------------------------
     # Sample discovery
     # ------------------------------------------------------------------
-    def _build_samples(self) -> list[Sample]:
-        if self.phase == "train":
-            return [
+    def _build_samples(self, max_samples: Optional[int] = None) -> list[Sample]:
+        if self.phase in {"train", "val"}:
+            directories = (
+                self._train_dirs() if self.phase == "train" else self._val_dirs()
+            )
+            samples = [
                 Sample(path, label=0)
-                for directory in self._train_dirs()
+                for directory in directories
                 for path in self._list_images(directory)
             ]
+            return self._limit(samples, max_samples)
 
         normal_dir, anomaly_dir, gt_dir = self._test_layout()
         samples = []
         for directory, label in ((normal_dir, 0), (anomaly_dir, 1)):
             for image_path in self._list_images(directory):
                 samples.append(Sample(image_path, label, self._mask_path(image_path, gt_dir)))
-        return samples
+        return self._limit(samples, max_samples)
+
+    def _limit(self, samples: list[Sample], max_samples: Optional[int]) -> list[Sample]:
+        """Deterministically thin a split, keeping normal/anomaly balance."""
+        if not max_samples or len(samples) <= max_samples:
+            return samples
+
+        if self.phase != "test":
+            step = len(samples) / max_samples
+            return [samples[int(i * step)] for i in range(max_samples)]
+
+        by_label = {0: [s for s in samples if s.label == 0],
+                    1: [s for s in samples if s.label == 1]}
+        if not by_label[1]:
+            step = len(samples) / max_samples
+            return [samples[int(i * step)] for i in range(max_samples)]
+
+        n_per_class = max(1, max_samples // 2)
+        selected = []
+        for group in (by_label[0], by_label[1]):
+            n = min(n_per_class, len(group))
+            step = len(group) / n
+            selected.extend(group[int(i * step)] for i in range(n))
+        return selected
 
     def _train_dirs(self) -> list[Path]:
-        """Return existing normal-image directories, newest layout first."""
-        candidates = ("training/good", "train/good", "validation/good")
+        """Return existing normal training-image directories."""
+        candidates = ("training/good", "train/good")
         return [self.data_dir / rel for rel in candidates if (self.data_dir / rel).is_dir()]
+
+    def _val_dirs(self) -> list[Path]:
+        """Return defect-free validation directories, falling back to train."""
+        candidates = ("validation/good", "val/good", "test/good")
+        directories = [
+            self.data_dir / rel for rel in candidates if (self.data_dir / rel).is_dir()
+        ]
+        return directories or self._train_dirs()
 
     def _test_layout(self) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
         """Return (normal_dir, anomaly_dir, ground_truth_dir) for the available split."""
@@ -124,7 +176,7 @@ class MVTecADDataset(Dataset):
         sample = self.samples[idx]
         pil_image = Image.open(sample.image_path).convert("RGB")
 
-        if self.phase == "train":
+        if self.phase in {"train", "val"}:
             image = self.transform(pil_image) if self.transform else pil_image
             return image, sample.label
 

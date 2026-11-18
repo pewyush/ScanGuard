@@ -1,108 +1,89 @@
-"""Command-line entry point for training ScanGuard baselines."""
+"""Command-line entry point for ScanGuard."""
 
 import argparse
+import os
 from typing import Optional, Sequence
 
-import torch
-from torch import nn
-from torch.optim import AdamW
-
-from scanguard.data import get_mvtec_ad2_dataloaders
-from scanguard.models import build_autoencoder
-from scanguard.training.runner import train_category
+from scanguard.experiments import run
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train ConvAutoencoder on MVTec AD 2"
+        prog="scanguard",
+        description="Unsupervised visual anomaly detection on MVTec AD 2",
     )
-    parser.add_argument(
-        "--data-dir", type=str, required=True, help="Path to MVTec AD 2 root directory"
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    train = subparsers.add_parser(
+        "train",
+        aliases=["compare"],
+        help="Train the autoencoder, fit PaDiM, compare them, and write results",
     )
-    parser.add_argument(
-        "--categories",
-        type=str,
-        default=None,
-        help="Comma-separated list of categories (e.g. bottle,cable)",
+    train.add_argument("--data-dir", default="data/raw", help="Dataset root (contains <category>/)")
+    train.add_argument("--category", default="can", help="MVTec AD 2 category")
+    train.add_argument(
+        "--full",
+        action="store_true",
+        help="Use every training/validation/test image (default: small quick slice)",
     )
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
-    parser.add_argument("--latent-dim", type=int, default=128, help="Latent dimension size")
-    parser.add_argument(
-        "--base-channels", type=int, default=32, help="Base channels in encoder"
+    train.add_argument("--epochs", type=int, default=None, help="Autoencoder epochs")
+    train.add_argument("--batch-size", type=int, default=16)
+    train.add_argument("--lr", type=float, default=1e-3)
+    train.add_argument("--weight-decay", type=float, default=1e-4)
+    train.add_argument("--latent-dim", type=int, default=128, help="Autoencoder latent size")
+    train.add_argument("--base-channels", type=int, default=32)
+    train.add_argument("--padim-latent-dim", type=int, default=100)
+    train.add_argument("--padim-reg", type=float, default=0.01)
+    train.add_argument("--img-size", type=int, default=256)
+    train.add_argument("--device", default="auto", help="auto, cpu, cuda or cuda:0")
+    train.add_argument("--num-workers", type=int, default=4)
+    train.add_argument("--checkpoint-dir", default="checkpoints")
+    train.add_argument("--results-dir", default="results")
+    train.add_argument("--figures-dir", default="results/figures")
+    train.add_argument(
+        "--skip-train",
+        action="store_true",
+        help="Reuse an existing autoencoder checkpoint instead of retraining",
     )
-    parser.add_argument("--img-size", type=int, default=256, help="Input image size")
-    parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
-    parser.add_argument("--num-workers", type=int, default=4, help="Dataloader workers")
-    parser.add_argument(
-        "--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory"
-    )
+    train.add_argument("--seed", type=int, default=0)
+    train.set_defaults(handler=_train)
+
+    serve = subparsers.add_parser("serve", help="Start the comparison dashboard")
+    serve.add_argument("--host", default=os.getenv("SCANGUARD_HOST", "127.0.0.1"))
+    serve.add_argument("--port", type=int, default=int(os.getenv("SCANGUARD_PORT", "8000")))
+    serve.add_argument("--category", default=os.getenv("SCANGUARD_CATEGORY", "can"))
+    serve.add_argument("--results", default=None, help="Path to results JSON")
+    serve.add_argument("--checkpoint", default=None, help="Path to autoencoder checkpoint")
+    serve.add_argument("--padim", default=None, help="Path to PaDiM statistics (.npz)")
+    serve.add_argument("--figures", default=None, help="Directory with result figures")
+    serve.set_defaults(handler=_serve)
+
     return parser
 
 
-def resolve_device(requested: str) -> torch.device:
-    """Fall back to CPU when a CUDA device was requested but is unavailable."""
-    device = torch.device(requested)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        return torch.device("cpu")
-    return device
+def _train(args: argparse.Namespace) -> None:
+    run(args)
 
 
-def parse_categories(value: Optional[str]) -> Optional[list[str]]:
-    if not value:
-        return None
-    return [category.strip() for category in value.split(",") if category.strip()]
+def _serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    os.environ["SCANGUARD_CATEGORY"] = args.category
+    if args.results:
+        os.environ["SCANGUARD_RESULTS"] = args.results
+    if args.checkpoint:
+        os.environ["SCANGUARD_CHECKPOINT"] = args.checkpoint
+    if args.padim:
+        os.environ["SCANGUARD_PADIM"] = args.padim
+    if args.figures:
+        os.environ["SCANGUARD_FIGURES"] = args.figures
+
+    uvicorn.run("scanguard.serving.app:app", host=args.host, port=args.port)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    """Train one autoencoder per requested MVTec AD 2 category."""
     args = build_parser().parse_args(argv)
-    device = resolve_device(args.device)
-    print(f"Using device: {device}")
-
-    loaders = get_mvtec_ad2_dataloaders(
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
-        img_size=args.img_size,
-        num_workers=args.num_workers,
-        categories=parse_categories(args.categories),
-    )
-
-    criterion = nn.MSELoss()
-    model_config = {
-        "latent_dim": args.latent_dim,
-        "base_channels": args.base_channels,
-        "in_channels": 3,
-        "img_size": args.img_size,
-    }
-
-    for category, category_loaders in loaders.items():
-        # A fresh model per category: categories must not share weights.
-        model = build_autoencoder(
-            latent_dim=args.latent_dim,
-            base_channels=args.base_channels,
-            in_channels=3,
-            img_size=args.img_size,
-            device=device,
-        )
-        optimizer = AdamW(
-            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
-        )
-        train_category(
-            model,
-            category_loaders,
-            category=category,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=device,
-            epochs=args.epochs,
-            checkpoint_dir=args.checkpoint_dir,
-            model_config=model_config,
-        )
-
-    print("\nTraining complete.")
+    args.handler(args)
 
 
 if __name__ == "__main__":

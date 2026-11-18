@@ -92,6 +92,92 @@ These may be natural extensions in a follow-up project, but are not part of this
 
 ---
 
+## Implementation & Usage
+
+The full pipeline — convolutional autoencoder, PaDiM, evaluation, figures — is
+implemented and exposed through one CLI.
+
+### Setup
+
+```bash
+uv pip install --torch-backend cpu -e .   # CPU-only machine (this repo's setup)
+# uv pip install --torch-backend auto -e .  # lets uv pick CUDA when a GPU exists
+```
+
+`uv sync` also works, but on Linux its lock resolves the CUDA build of PyTorch
+(several GB of `nvidia-*` wheels); the CPU backend install above is faster on a
+machine without a GPU. The final GPU run can use `--torch-backend auto`.
+
+Use `uv run --no-sync` for every command below. Plain `uv run` would re-sync
+from the lock and start downloading CUDA wheels again on a CPU-only machine.
+Alternatively call the installed entry point directly: `.venv/bin/scanguard`.
+
+### Quick run (small slice, ~1–2 minutes on CPU)
+
+```bash
+uv run --no-sync scanguard train
+```
+
+By default this uses 64 training, 16 validation and 48 test images, 8 epochs,
+and input size 256. It trains the autoencoder, fits PaDiM, evaluates both on the
+public `can` test split, and writes:
+
+- `results/can_results.json` and `results/can_results.md` — metric tables
+- `results/figures/can_examples.png` — input / AE / PaDiM / ground-truth grid
+- `results/figures/can_metrics.png` — metric comparison chart
+- `checkpoints/can_best.pt` — autoencoder weights
+- `checkpoints/can_padim.npz` — per-position Gaussian statistics
+
+### Full run
+
+```bash
+uv run --no-sync scanguard train --full
+```
+
+`--full` uses all training (412), validation (46) and test (162) images, with
+50 epochs by default. Useful options:
+
+```bash
+uv run --no-sync scanguard train --full --category can --device auto --epochs 50
+uv run --no-sync scanguard train --full --skip-train     # reuse the AE checkpoint
+```
+
+The dataset root defaults to `data/raw`, where both
+`data/raw/<category>/<category>/...` and `data/raw/<category>/...` layouts are
+accepted.
+
+### Dashboard
+
+```bash
+uv run --no-sync scanguard serve
+# http://127.0.0.1:8000
+```
+
+The page shows the latest comparison table and figures, and lets you upload an
+image to see live autoencoder and PaDiM scores, their operating thresholds, and
+anomaly-map overlays. Override paths with `SCANGUARD_RESULTS`,
+`SCANGUARD_CHECKPOINT`, `SCANGUARD_PADIM` and `SCANGUARD_FIGURES`, or with
+`scanguard serve --category can`.
+
+### Execution path
+
+| Layer | Module |
+|---|---|
+| Dataset / loaders | `scanguard.data` |
+| Autoencoder | `scanguard.models.autoencoder` |
+| PaDiM | `scanguard.models.padi_m` |
+| Metrics incl. AU-PRO | `scanguard.evaluation` |
+| Training | `scanguard.training` |
+| Comparison pipeline | `scanguard.experiments.compare` |
+| Dashboard | `scanguard.serving.app` |
+
+`experiments/run_comparison.py` is a compatibility wrapper around
+`scanguard train`.
+
+---
+
 ## System Requirements
 
-Python 3.12.10
+Python 3.12.10 with PyTorch (CPU or CUDA), torchvision, NumPy, Matplotlib,
+FastAPI and uvicorn — see `pyproject.toml`.
+

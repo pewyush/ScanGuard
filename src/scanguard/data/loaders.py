@@ -68,13 +68,24 @@ def build_category_loaders(
     batch_size: int = 16,
     img_size: int = 256,
     num_workers: int = 4,
+    max_train: Optional[int] = None,
+    max_val: Optional[int] = None,
+    max_test: Optional[int] = None,
 ) -> Dict[str, DataLoader]:
-    """Build the normal-only train loader and normal+anomaly test loader."""
+    """Build normal-only train/val loaders and a normal+anomaly test loader."""
     train_dataset = MVTecADDataset(
         root=data_dir,
         category=category,
         phase="train",
         transform=build_train_transform(img_size),
+        max_samples=max_train,
+    )
+    val_dataset = MVTecADDataset(
+        root=data_dir,
+        category=category,
+        phase="val",
+        transform=build_test_transform(img_size),
+        max_samples=max_val,
     )
     test_dataset = MVTecADDataset(
         root=data_dir,
@@ -82,15 +93,18 @@ def build_category_loaders(
         phase="test",
         transform=build_test_transform(img_size),
         mask_transform=build_mask_transform(img_size),
+        max_samples=max_test,
     )
 
     common = dict(
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
     )
     return {
-        "train": DataLoader(train_dataset, shuffle=True, **common),
+        "train": DataLoader(train_dataset, shuffle=True, drop_last=False, **common),
+        "val": DataLoader(val_dataset, shuffle=False, **common),
         "test": DataLoader(
             test_dataset, shuffle=False, collate_fn=collate_test_batch, **common
         ),
@@ -104,8 +118,11 @@ def get_mvtec_ad2_dataloaders(
     img_size: int = 256,
     num_workers: int = 4,
     categories: Optional[Iterable[str]] = None,
+    max_train: Optional[int] = None,
+    max_val: Optional[int] = None,
+    max_test: Optional[int] = None,
 ) -> Dict[str, Dict[str, DataLoader]]:
-    """Create per-category train/test loaders for MVTec AD 2."""
+    """Create per-category train/val/test loaders for MVTec AD 2."""
     return {
         category: build_category_loaders(
             data_dir,
@@ -113,6 +130,9 @@ def get_mvtec_ad2_dataloaders(
             batch_size=batch_size,
             img_size=img_size,
             num_workers=num_workers,
+            max_train=max_train,
+            max_val=max_val,
+            max_test=max_test,
         )
         for category in resolve_categories(data_dir, categories)
     }

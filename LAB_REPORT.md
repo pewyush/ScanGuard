@@ -1,11 +1,11 @@
 # ScanGuard: Unsupervised Visual Anomaly Detection for Industrial Quality Control
 
-**Lab Report Submission — 5 October 2026**
+**Lab Report Submission — 19 November 2026**
 
 | Field | Detail |
 |---|---|
 | Project title | ScanGuard — Unsupervised Visual Anomaly Detection for Industrial Quality Control |
-| Submission date | 5 October 2026 |
+| Submission date | 19 November 2026 |
 | Team members | Peeyush, Harshit Batra |
 | Repository | `ScanGuard` (this project) |
 | Reference documents | `README.md`, `docs/review-of-existing-systems.md`, `docs/objectives-and-methodology.md`, `docs/algorithm-technique-relevance.md`, `docs/feasibility.md` |
@@ -296,7 +296,134 @@ The relevance test applied to every algorithm below: does it (a) illuminate the 
 
 ---
 
-## 6. References
+## 6. Results and Discussion
+
+### 6.1 Implemented system
+
+Every deliverable in Appendix A now has a corresponding implementation:
+
+| Deliverable | Implementation |
+|---|---|
+| Data pipeline | `scanguard.data` — MVTec AD 2 layout detection, normal-only train/validation loaders, resized test loader with pixel-precise masks |
+| Baseline model | `scanguard.models.autoencoder` — convolutional autoencoder trained on normal images only, MSE reconstruction scoring |
+| Comparison model | `scanguard.models.padi_m` — multi-level pretrained features, random channel selection, one multivariate Gaussian **per spatial position**, Mahalanobis scoring |
+| Results tables | `scanguard.experiments.compare` — image AUROC/AUPR/precision/recall/F1 at a validation-selected threshold, pixel AUROC, AU-PRO(0.30), AU-PRO(0.05) |
+| Qualitative results | Anomaly-map grid against ground-truth masks in `results/figures/` |
+| Analysis | Section 6.4 below |
+| Comparison to SOTA | Section 7.2 |
+
+The autoencoder is trained on `train/good` only and selected on
+`validation/good` only; the public test split is used exclusively for final
+evaluation. PaDiM is fitted on the same defect-free training split with no
+gradient training. Operating thresholds are the 99th percentile of defect-free
+validation scores, so the thresholded precision/recall/F1 figures are computed
+without touching test labels. AU-PRO follows the MVTec definition: overlap is
+measured per connected ground-truth region and integrated against the global
+false-positive rate.
+
+### 6.2 Preliminary run (pipeline validation)
+
+The checked-in numbers below come from the **quick slice** (64 training / 16
+validation / 48 test images, 8 epochs, 256 × 256) used to validate the pipeline
+end to end. They demonstrate that every stage runs and that the comparison is
+computed, but they are **not** the final experimental result. The same table is
+regenerated automatically by `uv run --no-sync scanguard train --full` into
+`results/can_results.md`.
+
+| Metric | Autoencoder | PaDiM |
+|---|---:|---:|
+| Image AUROC | 0.4271 | 0.4635 |
+| Image AUPR | 0.5028 | 0.4537 |
+| Image precision | 0.2941 | 0.3750 |
+| Image recall | 0.2083 | 0.2500 |
+| Image F1 | 0.2439 | 0.3000 |
+| Pixel AUROC | 0.6170 | 0.6789 |
+| AU-PRO (0.30) | 0.1207 | 0.2070 |
+| AU-PRO (0.05) | 0.0170 | 0.0767 |
+
+Two observations already survive the small sample: PaDiM dominates the
+localization metrics (AU-PRO(0.30) 0.207 vs 0.121; AU-PRO(0.05) 0.077 vs 0.017)
+and pixel-AUROC (0.679 vs 0.617), while both methods are close to chance at
+image level. This is the expected ordering: the reconstruction baseline does not
+penalise small defects strongly enough, whereas the feature-space distance does.
+The small image-level sample (48 images, 24 anomalous) makes AUROC/AUPR noisy,
+which is why the full run is required before drawing conclusions.
+
+### 6.3 Expected full-run behaviour and failure modes
+
+`can` is the hardest MVTec AD 2 scenario and the only category downloaded for
+this submission. Its defects are extremely small: the median public-test mask
+contains roughly 130 pixels out of a 2232 × 1024 image (about 0.006%), and after
+resizing to 256 × 256 several masks collapse to only a handful of pixels (6 of
+90 become empty). Two consequences follow.
+
+1. **Localization is resolution-limited.** At 256 × 256 the benchmark's own
+   PatchCore result on `can` is only 21.6% AU-PRO(0.30), so a weak baseline and a
+   simplified PaDiM cannot be expected to score highly. PaDiM's 64 × 64 patch
+   grid (3 pretrained stages, 100 random channels) has to localise a defect that
+   is sub-pixel at that resolution; bilinear upsampling cannot recover the lost
+   detail.
+2. **Image-level detection is the more informative view.** Lighting variants
+   (`regular`, `overexposed`, `underexposed`, `shift_*`) move normal appearance
+   substantially, so a normal-only detector can score a defect-free image higher
+   than a defective one. The thresholded F1 therefore matters more than AUROC in
+   this category.
+
+The autoencoder's documented weakness is visible in the preliminary run: its
+pixel-AUROC is close to chance (0.617) and its AU-PRO is much lower than PaDiM's.
+The reconstruction baseline over-generalises and reconstructs defective regions,
+so the residual is small exactly where the defect is — the negative result the
+report predicted. PaDiM's advantage comes from measuring distance in a frozen
+pretrained feature space rather than pixel space, and its localization is
+produced by the same forward pass at no extra training cost.
+
+**Positioning against the published benchmark.** On `can` at 256 × 256, MVTec's
+paper reports PatchCore at 21.6% AU-PRO(0.30) and 4.7% AU-PRO(0.05) on the
+private test split; EfficientAD is the best method overall but is not reported
+per category in the summary used here. The preliminary PaDiM run reaches 20.7%
+and 7.7% respectively on the public split. Those figures are the same order of
+magnitude, but they are **not** a like-for-like comparison: public versus private
+split, 48 versus the full test set, and a different feature-reduction scheme.
+The full run regenerates the numbers under the same protocol, and any claim
+against the published table must be made from those results only.
+
+### 6.4 Limitations
+
+- **One category.** The planned mix of one "reasonable" and one hard scenario
+  was not realised because only `can` was available; the comparison is therefore
+  a hardest-case study, not a category average.
+- **ImageNet domain bias.** The pretrained backbone was trained on natural
+  imagery, a known source of false positives on industrial, transparent and
+  reflective surfaces.
+- **CPU-only execution.** The full run is feasible on CPU but slow; it was not
+  run on the development machine because the final run is executed separately.
+- **No private-split evaluation.** Public test ground truth is used; the private
+  split would require MVTec's benchmark server and is out of scope.
+- **Threshold calibration.** Thresholds are the 99th percentile of defect-free
+  validation scores, not an optimised operating point; F1 is reported at that
+  fixed threshold rather than tuned on test.
+
+### 6.5 Reproducibility
+
+```bash
+uv run --no-sync scanguard train            # quick slice, validates the pipeline
+uv run --no-sync scanguard train --full     # full train/validation/test split
+uv run --no-sync scanguard serve            # dashboard at http://127.0.0.1:8000
+```
+
+`--no-sync` keeps `uv` from re-resolving the lock (which pulls CUDA PyTorch
+wheels on Linux); on a GPU machine a normal `uv sync` followed by
+`uv run scanguard ...` is equivalent.
+
+Seeds are fixed (`--seed 0`), the dataset split is determined by the MVTec AD 2
+directory layout, and all artifacts (results JSON/Markdown, figures, checkpoints,
+PaDiM statistics) are written to `results/` and `checkpoints/`. The autoencoder
+checkpoint records its configuration, so inference reconstructs the exact same
+architecture.
+
+---
+
+## 7. References
 
 1. Heckler-Kram, M., Neudeck, M., Scheler, C., König, R., & Steger, G. *The MVTec AD 2 Dataset: Advanced Scenarios for Unsupervised Anomaly Detection.* International Journal of Computer Vision (IJCV), 134(4), 2026. arXiv:2503.21622. Dataset: https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2
 2. Bergmann, P., Fauser, M., Sattlegger, S., & Steger, G. *MVTec AD — A Comprehensive Real-World Dataset for Unsupervised Anomaly Detection.* IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2019.
@@ -321,7 +448,7 @@ The relevance test applied to every algorithm below: does it (a) illuminate the 
 21. Akcay, S., Ameln, D., Vaidya, A., Lakshmanan, B., Ahuja, N., & Genc, U. *Anomalib: A Deep Learning Library for Anomaly Detection.* IEEE Symposium on Series on Data, Engineering and Applications (SSDEA), 2022. arXiv:2202.08341. *(Reference implementation library containing PaDiM, PatchCore, FastFlow and DSR.)*
 22. MVTec Software GmbH. *MVTec AD 2 Benchmark Server.* https://www.mvtec.com/benchmark *(private-split ground-truth evaluation; optional for this project).*
 
-### 6.1 Internal project documents
+### 7.1 Internal project documents
 
 - `README.md` — project scope, dataset rationale, tentative plan, out-of-scope list, system requirements.
 - `docs/review-of-existing-systems.md` — review of the three dominant method families and the benchmark landscape.
@@ -329,7 +456,7 @@ The relevance test applied to every algorithm below: does it (a) illuminate the 
 - `docs/algorithm-technique-relevance.md` — mapping of algorithms onto the project plan, with relevance direction per item.
 - `docs/feasibility.md` — data accessibility, compute budget, risk timeline, and fallback plans.
 
-### 6.2 Published benchmark figures (verified against arXiv:2503.21622)
+### 7.2 Published benchmark figures (verified against arXiv:2503.21622)
 
 The MVTec AD 2 paper benchmarks **seven** methods: EfficientAD, Reverse Distillation (RD), Reverse Distillation Revisited (RD++), PatchCore, MSFlow, SimpleNet and Dual Subspace Re-Projection (DSR). All results below are at input resolution 256 × 256, on the private test split (TEST priv).
 

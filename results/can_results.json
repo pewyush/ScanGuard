@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "category": "can",
+    "quick": true,
+    "img_size": 256,
+    "device": "cpu",
+    "seed": 0,
+    "epochs": 8,
+    "n_train": 64,
+    "n_val": 16,
+    "n_test": 48,
+    "n_test_normal": 24,
+    "n_test_anomaly": 24,
+    "n_masks": 48,
+    "elapsed_seconds": 74.1,
+    "created": "2026-11-18T11:56:15+00:00",
+    "checkpoint": "checkpoints/can_best.pt",
+    "padim_stats": "checkpoints/can_padim.npz"
+  },
+  "autoencoder": {
+    "config": {
+      "latent_dim": 128,
+      "base_channels": 32,
+      "in_channels": 3,
+      "img_size": 256
+    },
+    "best_epoch": 5,
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 2.3330176770687103,
+        "val_loss": 2.1614913940429688
+      },
+      {
+        "epoch": 2,
+        "train_loss": 1.3082364797592163,
+        "val_loss": 1.7097840309143066
+      },
+      {
+        "epoch": 3,
+        "train_loss": 0.8420931249856949,
+        "val_loss": 5.422645568847656
+      },
+      {
+        "epoch": 4,
+        "train_loss": 0.6426808536052704,
+        "val_loss": 3.3472378253936768
+      },
+      {
+        "epoch": 5,
+        "train_loss": 0.5334685668349266,
+        "val_loss": 0.7132064700126648
+      },
+      {
+        "epoch": 6,
+        "train_loss": 0.4684409722685814,
+        "val_loss": 1.8523842096328735
+      },
+      {
+        "epoch": 7,
+        "train_loss": 0.43311575800180435,
+        "val_loss": 1.6835561990737915
+      },
+      {
+        "epoch": 8,
+        "train_loss": 0.41216030716896057,
+        "val_loss": 1.1529264450073242
+      }
+    ],
+    "threshold": 10.9185791015625,
+    "metrics": {
+      "image_auroc": 0.4270833333333333,
+      "image_aupr": 0.5028194078240794,
+      "pixel_auroc": 0.6169763086781483,
+      "au_pro_0.30": 0.12072687068499462,
+      "au_pro_0.05": 0.01697375767727527,
+      "threshold": 10.9185791015625,
+      "precision": 0.29411764705882354,
+      "recall": 0.20833333333333334,
+      "f1": 0.24390243902439027
+    }
+  },
+  "padim": {
+    "config": {
+      "backbone": "wide_resnet50_2",
+      "latent_dim": 63,
+      "gaussian_reg": 0.01,
+      "img_size": 256
+    },
+    "fit_seconds": 13.6,
+    "threshold": 77.33831176757812,
+    "metrics": {
+      "image_auroc": 0.4635416666666667,
+      "image_aupr": 0.45365200343894035,
+      "pixel_auroc": 0.6788689810405416,
+      "au_pro_0.30": 0.20698840832844187,
+      "au_pro_0.05": 0.07669472719723977,
+      "threshold": 77.33831176757812,
+      "precision": 0.375,
+      "recall": 0.25,
+      "f1": 0.3
+    }
+  }
+}

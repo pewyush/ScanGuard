@@ -44,14 +44,15 @@ def train_category(
     checkpoint_dir = Path(checkpoint_dir)
     history = TrainingHistory()
     train_loader = loaders["train"]
-    test_loader = loaders["test"]
+    val_loader = loaders.get("val", loaders["test"])
 
     log(f"\n=== Training on category: {category} ===")
     log(f"Training examples (normal only): {len(train_loader.dataset)}")
+    log(f"Validation examples (normal only): {len(val_loader.dataset)}")
 
     for epoch in range(1, epochs + 1):
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-        eval_loss = evaluate_epoch(model, test_loader, criterion, device)
+        eval_loss = evaluate_epoch(model, val_loader, criterion, device)
         history.train_losses.append(train_loss)
         history.eval_losses.append(eval_loss)
         log(
